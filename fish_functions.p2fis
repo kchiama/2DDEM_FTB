@@ -1,0 +1,376 @@
+; Every single parameter uses SI unit.
+
+fish define exportResultSettings
+    command
+        ; Geometrical attributes (e.g., position, radius) and the id are by default saved
+        set mechanical age 0
+        ball result activate addattribute group time 10 zero nothrow true
+        wall result activate addattribute position time 10 zero nothrow true ; To have properties such as the wall friction
+    end_command
+end
+
+fish define make_domain
+
+    command
+        model domain extent @x_domain_origin @x_domain_max @y_domain_origin @y_domain_max
+    end_command
+
+end
+
+fish define export_to_svg (name)
+    svg_index = svg_index + 1
+    local filename = ''
+    if svg_index < 10 then
+        filename = '0'
+    end_if
+    filename = filename + string(svg_index) + '_' + name + '.svg'
+    filename = 'export_svg/' + filename
+    command
+        plot svg filename @filename
+    end_command
+end
+
+fish define make_walls
+
+    command
+        wall create ...
+            vertices ...
+            @x_model_begin @y_model_begin ...
+            @x_model_begin @y_model_end ...
+            group 'vertical_x_begin'
+        wall create ...
+            vertices ...
+            @x_model_end @y_model_begin ...
+            @x_model_end @y_model_end ...
+            group 'vertical_x_end'
+        wall create ...
+            vertices ...
+            @x_model_begin @y_model_begin ...
+            @x_piece_1_limit @y_model_begin ...
+            group 'horizonal_y_begin_part_near_x_begin'
+        wall create ...
+            vertices ...
+            @x_piece_1_limit @y_model_begin ...
+            @x_model_end @y_model_begin ...
+            group 'horizonal_y_begin_part_near_x_end'
+    end_command
+    
+    ;export_to_svg("walls")
+end
+
+fish define define_default_contact_material
+    command
+        cmat default type ball-ball model linear            ...
+            method deformability emod @effective_modulus kratio @stiffness_ratio      ...
+            property dp_nratio 0.7
+
+        cmat default type ball-facet model linear            ...
+            method deformability emod @effective_modulus kratio @stiffness_ratio       ...
+            property dp_nratio 0.7
+    end_command
+end
+
+fish define settlement
+    command
+        model mechanical timestep scale
+        model gravity 9.80665
+        model cycle 1000 calm 50
+        model solve ratio-average 1e-4
+    end_command
+end
+
+fish define get_global_max_topo
+    local global_max_topo = y_domain_origin
+    loop foreach local cur_ball ball.list
+        local cur_y = ball.pos.y(cur_ball)
+        if cur_y > global_max_topo then
+            global_max_topo = cur_y
+        end_if
+    end_loop
+    get_global_max_topo = global_max_topo
+end
+
+fish define find_balls_in_box(x_step_i,x_axis_discretization_step)
+    ; Defining the lower box corner y at y_domain_origin is safe but not optimized
+    ; because we loop over a lot of unnecessary balls
+    local lower_box_corner = vector(x_step_i,y_domain_origin)
+    local upper_box_corner = vector(x_step_i + x_axis_discretization_step ,y_domain_max)
+    find_balls_in_box = array.create(ball.inbox(lower_box_corner,upper_box_corner,false))
+end
+
+fish define get_local_max_topo(x_step_i,x_axis_discretization_step)
+
+    local balls_within_interval = find_balls_in_box(x_step_i,x_axis_discretization_step)
+    ; TODO try foreach to simplify syntax
+    local local_max_topo = y_domain_origin
+    
+    if array.size(balls_within_interval,1) = 0 then
+        get_local_max_topo = local_max_topo ; TO APPLY IN OTHER SCRIPT
+        exit
+    end_if
+    
+    loop local ball_i (1,array.size(balls_within_interval,1))
+    ;loop foreach local cur_ball balls_within_interval
+        local cur_ball = balls_within_interval(ball_i)
+        local cur_y = ball.pos.y(cur_ball)
+        if cur_y > local_max_topo then
+            local_max_topo = cur_y
+        end_if
+    end_loop
+    get_local_max_topo = local_max_topo
+end
+
+
+fish define end_criterion_add_new_balls(moving_wall_location,x_axis_discretization_step,target_topo,thickness_above_max_topo)
+    local should_we_continue = false
+    loop local x_step_i (moving_wall_location,x_model_end - x_axis_discretization_step,x_axis_discretization_step)
+
+        local local_max_topo = get_local_max_topo(x_step_i,x_axis_discretization_step)
+        
+        ; Approximation that we expect all the topo is above the target topo
+        if local_max_topo < target_topo + coef_to_be_a_litte_above_target_topo*thickness_above_max_topo then
+            should_we_continue = true
+            exit loop
+        end_if
+    end_loop
+    end_criterion_add_new_balls = should_we_continue
+end
+
+fish define ball_density(ball_group)
+    command
+        ball attribute density 2600 range group @ball_group
+    end_command
+end
+
+
+fish define add_new_balls_small_box_in_new_growth_layer(x_min,x_max,y_min,y_max,group_name,ball_lower_radius,ball_upper_radius)
+    local modified_x_max = x_max
+    ; TODO maybe necessary but double-check these lines. It seems that it it never called
+    if modified_x_max > x_model_end then
+        modified_x_max = x_model_end
+    end_if
+        
+    local modified_y_max = 2.0 * y_max - y_min ; = y_max + (y_max - y_min) : I make the box thickness to have PFC making the maximum of balls
+    if modified_y_max - y_min < 4.0 * ball_upper_radius then ; = 2 balls with max radius
+        modified_y_max = modified_y_max + 4.0 * ball_upper_radius
+    end_if
+    
+    local local_nb_balls_to_add = int(((modified_x_max -x_min)/(2.0*ball_lower_radius))*((modified_y_max -y_min)/(2.0*ball_lower_radius)))
+    if local_nb_balls_to_add == 0 then
+        command
+            program echo-line 'Should not pass here!'
+            program return
+        end_command
+        local_nb_balls_to_add = 1
+    end_if
+    
+    command
+        ; may I should translate a little the box vertically
+        ball generate ...
+            number @local_nb_balls_to_add ...
+            box @x_min @modified_x_max @y_min @modified_y_max ...
+            radius @ball_lower_radius @ball_upper_radius ...
+            group @group_name
+    end_command
+end
+
+
+fish define add_new_balls_in_new_growth_layer(moving_wall_location,thickness_above_max_topo,x_axis_discretization_step,target_topo,ball_lower_radius,ball_upper_radius,layer_name)
+
+    ; PFC rounds the values so sometimes moving_wall_location + x*x_axis_discretization_step is a little (<1) above x_model_end - x_axis_discretization_step.
+    ; So I added a + 1 to be sure.
+    local end_loop_criterion = x_model_end - x_axis_discretization_step + 1
+    loop local x_step_i (moving_wall_location,end_loop_criterion,x_axis_discretization_step)
+        local local_max_topo = get_local_max_topo(x_step_i,x_axis_discretization_step)
+
+        ; Approximation that we expect all the topo is above the target topo
+        ; I think that we can define a better approximation based on the particle size and the horizontal box size
+        if local_max_topo > target_topo + 2*coef_to_be_a_litte_above_target_topo*thickness_above_max_topo then
+            continue
+        end_if
+        local local_thickness_to_add = target_topo - local_max_topo + 2*coef_to_be_a_litte_above_target_topo*thickness_above_max_topo
+        if local_thickness_to_add < 0 then
+            local_thickness_to_add = -1.0 * local_thickness_to_add ; a little weird....
+        end_if
+        add_new_balls_small_box_in_new_growth_layer(x_step_i,x_step_i + x_axis_discretization_step,local_max_topo,local_max_topo + local_thickness_to_add,layer_name,ball_lower_radius,ball_upper_radius)
+    end_loop
+    
+    ball_density(layer_name)
+    command
+        ball property 'fric' 0.0 range group @layer_name
+    end_command
+    ;export_to_svg('before_settlement')
+    settlement
+    ;export_to_svg('after_settlement')
+end
+
+fish define bond_growth_layer(layer_name)
+    command
+        contact model linearpbond range contact type ball-ball group @layer_name
+        contact method bond gap @growth_bond_gap range contact type ball-ball group @layer_name
+        contact method deformability emod 1.0e9 kratio 1.0 range contact type ball-ball group @layer_name
+        contact method pb_deformability emod 1e9 kratio 1.0 range contact type ball-ball group @layer_name
+        contact property pb_ten @growth_pb_ten pb_coh @growth_pb_coh pb_rmul 0.8 dp_nratio 0.7 pb_fa 32.6 range contact type ball-ball group @layer_name
+        ball property fric 0.3 range group @layer_name
+
+        contact property lin_force 0.0 0.0 lin_mode 1 range contact type ball-ball group @layer_name
+        ball attribute contactforce multiply 0.0 contactmoment multiply 0.0 range group @layer_name
+
+        ball attribute displacement multiply 0.0 range group @layer_name
+    end_command
+    
+    settlement
+end
+
+fish define do_add_layer(moving_wall_location,target_topo,thickness_above_max_topo,ball_lower_radius,ball_upper_radius,layer_name)
+    local current_model_lenght = x_model_end - moving_wall_location
+    local nb_boxes = math.floor((current_model_lenght) / (ball_upper_radius * 2.0 * 10.0))
+    local x_axis_discretization_step = current_model_lenght / nb_boxes
+    
+    local should_we_continue = true
+    loop while should_we_continue = true
+        add_new_balls_in_new_growth_layer(moving_wall_location,thickness_above_max_topo,x_axis_discretization_step,target_topo,ball_lower_radius,ball_upper_radius,layer_name)
+        should_we_continue = end_criterion_add_new_balls(moving_wall_location,x_axis_discretization_step,target_topo,thickness_above_max_topo)
+    end_loop
+end
+
+fish define is_a_ball_above_target(target_topo)
+
+    local result = false
+    loop foreach local cur_ball ball.list
+        local cur_y = ball.pos.y(cur_ball)
+        if cur_y > target_topo then
+            result = true
+            exit loop
+        end_if
+    end_loop
+    is_a_ball_above_target = result
+end
+
+fish define make_uppermost_layer_flat(target_topo)
+    
+    ;export_to_svg('before_making_flat')
+    loop while is_a_ball_above_target(target_topo) = true
+        command
+            ball delete range position-y @target_topo @y_domain_max
+        end_command
+        settlement
+    end_loop
+    ;export_to_svg('after_making_flat')
+end
+
+fish define add_layer(moving_wall_location,thickness_above_max_topo,ball_lower_radius,ball_upper_radius,layer_name)
+        
+    ;export_to_svg('model_state_before_deposition_of_' + layer_name)
+        
+    local global_max_topo = get_global_max_topo
+    local target_topo = global_max_topo + thickness_above_max_topo
+    do_add_layer(moving_wall_location,target_topo,thickness_above_max_topo,ball_lower_radius,ball_upper_radius,layer_name)
+    make_uppermost_layer_flat(target_topo)
+    
+    ;export_to_svg('model_state_after_deposition_of_' + layer_name)
+    
+end
+
+fish define saveCurrentModelState(filename_without_extension)
+    command
+        model save [filename_without_extension]
+        ;results export [filename_without_extension]
+    end_command
+end
+
+fish define create_a_pre_growth_layer(layer_name)
+    
+    add_layer(x_model_begin,pre_growth_layer_thickness,ball_lower_radius_pre_growth,ball_upper_radius_pre_growth,layer_name)
+    ball_density(layer_name)
+    
+    command
+        ball property 'fric' 0.0
+        wall property 'fric' 0.0
+    end_command
+    
+    settlement
+end
+
+fish define create_pre_growth_layers
+    loop local i (1,nb_pre_growth_layers)
+        create_a_pre_growth_layer('pre_growth_layer_' + string(i))
+        ;if i # nb_pre_growth_layers then
+        ;    add_layer(x_model_begin,flexural_slip_layer_thickness,ball_lower_radius_flexural_slip_layer,ball_upper_radius_flexural_slip_layer,'pre_growth_flexural_slip_layer_' + string(i))
+        ;end_if
+    end_loop
+    saveCurrentModelState('unbounded_pre_growth')
+end
+
+fish define set_mechanical_prop_before_deformation
+    loop local i (first_bonded_layer_index,nb_pre_growth_layers)
+        local pre_growth_layer_name = 'pre_growth_layer_' + string(i)
+        command
+            contact model linearpbond range contact type 'ball-ball' group @pre_growth_layer_name
+            contact method deformability emod @effective_modulus kratio @stiffness_ratio range group @pre_growth_layer_name
+            contact method pb_deformability emod @effective_modulus kratio @stiffness_ratio range group @pre_growth_layer_name
+            contact property pb_ten @pre_growth_pb_ten pb_coh @pre_growth_pb_coh pb_rmul 0.8 dp_nratio 0.7 pb_fa 32.6 range group @pre_growth_layer_name
+
+            contact property lin_force 0.0 0.0 lin_mode 1 range group @pre_growth_layer_name
+            ball attribute force-contact multiply 0.0 moment-contact multiply 0.0 range group @pre_growth_layer_name
+
+            ball attribute displacement multiply 0.0 range group @pre_growth_layer_name
+            contact method bond gap @pre_growth_bond_gap range group @pre_growth_layer_name
+
+            ball property 'fric' @ball_friction range group @pre_growth_layer_name
+        end_command
+    end_loop
+    
+    ;command
+;        wall property 'fric' 0.3 range id 1
+;        wall property 'fric' 0.3 range id 2
+;        wall property 'fric' 0.0 range id 3
+;        wall property 'fric' 0.3 range id 4
+;    end_command
+    
+    settlement
+    saveCurrentModelState('bounded_pre_growth')
+end
+
+
+fish define run_deformation
+
+    local nb_deformation_steps = nb_growth_layers + 1
+    loop local time_i (1,nb_deformation_steps)
+    
+        ; I just the result files for the first deformation steps.
+        ; I cannot change nb_deformation_steps because that would change the time step.
+        if time_i = 5 then
+            exit loop
+        end_if
+    
+        command
+            wall attribute velocity-x 0.0
+            wall attribute velocity-x @moving_wall_x_velocity range group 'vertical_x_begin'
+            model mechanical timestep auto
+            model solve time [forward_deformation_duration / nb_deformation_steps]
+
+            ; Solve to an equilibrium state again
+            wall attribute velocity-x 0.0
+        end_command
+        settlement
+        if time_i # nb_deformation_steps then
+            local layer_name = 'growth_layer_' + string(time_i)
+            saveCurrentModelState('model_state_before_deposit_of_' + layer_name)
+            add_layer(moving_wall_x_velocity*time_i* forward_deformation_duration/ nb_deformation_steps,growth_layer_thickness,ball_lower_radius_growth,ball_upper_radius_growth,layer_name)
+            saveCurrentModelState('model_state_after_deposit_of_' + layer_name + '_unbonded')
+            bond_growth_layer(layer_name)
+            saveCurrentModelState('model_state_after_deposit_of_' + layer_name)
+            command
+                wall result clear
+                ball result clear
+            end_command
+        else
+            ;export_to_svg('last_deformation_stage')
+        end_if
+    end_loop
+    
+    saveCurrentModelState('last_deformation_stage')
+end
+
+program return

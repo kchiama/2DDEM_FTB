@@ -1,0 +1,43 @@
+; EPS 171 Numerical Sandbox Model
+; This model will generate sediment in a box and then deform it with displacement 
+; boundary conditions to form a fold and thrust belt in a numerical sandbox. 
+
+; Code Written by Benjamin Chauvin in PFC2D v. 5.00 (~2018)
+; Modified by Kristen Chiama for PFC2D v. 7.00 - contact: kchiama@g.harvard.edu
+; Last Updated: 1/24/2024
+; ================================================================
+
+model new
+model large-strain true
+model restore 'unbounded_pre_growth'
+
+fish automatic-create off
+model random 10001
+
+program call 'parameter_definition.p2dat' suppress
+program call 'fish_functions.p2fis' suppress
+plot 'Plot_Particles' movie index 1 interval 500
+plot 'Plot_Contacts' movie index 1 interval 500
+
+;@exportResultSettings
+@all_parameters
+;@make_domain
+;@make_walls
+;@define_default_contact_material
+;@create_pre_growth_layers
+
+@set_mechanical_prop_before_deformation
+
+; Change the value of the friction coefficient on the walls 
+; to analyze how it will change the deformation. 
+; Use values of 0.1 and 0.9 on walls 3 and 4.   
+wall property 'fric' 0.3 range id 1 ; left vertical wall
+wall property 'fric' 0.3 range id 2 ; right vertical wall
+wall property 'fric' 0.03 range id 3 ; bottom left wall
+wall property 'fric' 0.03 range id 4 ; bottom right wall
+
+
+@run_deformation
+
+project save
+program return

@@ -1,0 +1,71 @@
+; Every single parameter uses SI unit.
+
+fish define all_parameters
+
+    global svg_index = -1
+
+    ; Domain origin
+    global x_domain_origin = 0
+    global y_domain_origin = 0
+    
+    ; Position of the model origin relative to the domain origin
+    global x_positive_distance_from_domain_origin = 0
+    global y_positive_distance_from_domain_origin = 0
+
+    ; Dimensions of the initial model (containing balls)
+    global x_model_length = 20000
+    global y_model_length = 100000
+    
+    ; model limits
+    global x_model_begin = x_domain_origin + x_positive_distance_from_domain_origin
+    global y_model_begin = y_domain_origin + y_positive_distance_from_domain_origin
+    global x_model_end = x_model_begin + x_model_length
+    global y_model_end = y_model_begin + y_model_length
+    
+    
+    ; Extra length beyond the model to define the limit of the domain
+    global x_extra_domain_length = 0
+    global y_extra_domain_length = 0
+    
+    ; Domain limit
+    global x_domain_max = x_domain_origin + x_positive_distance_from_domain_origin + x_model_length + x_extra_domain_length
+    global y_domain_max = y_domain_origin + y_positive_distance_from_domain_origin + y_model_length + y_extra_domain_length
+    
+    ; Definition of the frictional boundary
+    local x_length_fraction = 0.5
+    global x_piece_1_limit = x_model_begin + x_model_length * x_length_fraction    
+    
+    ; Layer parameters
+    global ball_lower_radius_pre_growth = 45 ; initial set of 45 & 75 m radii
+    global ball_upper_radius_pre_growth = 75
+    global pre_growth_layer_thickness = 250;1000
+    global ball_density = 2600
+    global ball_lower_radius_growth = ball_lower_radius_pre_growth
+    global ball_upper_radius_growth = ball_upper_radius_pre_growth
+    global growth_layer_thickness = 160
+    global nb_pre_growth_layers = 8
+    global nb_growth_layers = 0;7
+    global coef_to_be_a_litte_above_target_topo = 0.1
+    global flexural_slip_layer_thickness = 100
+    global ball_lower_radius_flexural_slip_layer = 0.5 * ball_lower_radius_growth
+    global ball_upper_radius_flexural_slip_layer = 0.5 * ball_upper_radius_growth
+    
+    global pre_growth_pb_ten = 1e7
+    global pre_growth_pb_coh = pre_growth_pb_ten
+    global growth_pb_ten = 2.5e6
+    global growth_pb_coh = growth_pb_ten
+    global pre_growth_bond_gap = 0.1
+    global growth_bond_gap = pre_growth_bond_gap
+    
+    global first_bonded_layer_index = 1
+    global ball_friction = 0.3
+    global effective_modulus = 1e9
+    global stiffness_ratio = 1.0
+    global ball_density = 2600
+
+    local fraction_x_deformation = 0.25
+    global moving_wall_x_velocity = 1.0 ; 3 m/s
+    global forward_deformation_duration = (x_model_length * fraction_x_deformation) / moving_wall_x_velocity
+end
+
+program return
